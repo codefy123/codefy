@@ -1,5 +1,6 @@
 from flask import Flask, request, send_file, make_response
 from fpdf import FPDF
+from flask_cors import CORS
 import os
 import fitz  # PyMuPDF
 from PIL import Image, ImageDraw
@@ -24,6 +25,7 @@ genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB
 app.config['SECRET_KEY'] = secrets.token_hex(16)
+CORS(app, resources={r"/upload": {"origins": "https://handwrittenpdf1.web.app"}})
 
 csrf = CSRFProtect(app)
 
