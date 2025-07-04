@@ -1,0 +1,7 @@
+flask
+fpdf
+pillow
+pytesseract
+python-dotenv
+PyMuPDF
+google-generativeai
