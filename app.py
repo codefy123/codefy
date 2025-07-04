@@ -75,6 +75,12 @@ def extract_text_from_image(path):
     except:
         return "Sample OCR Text"
 
+def clean_response(text):
+    import re
+    text = re.sub(r"[*`]", "", text)
+    text = re.sub(r"\n\s*\n+", "\n", text)
+    return text.strip()
+
 def solve_with_gemini(questions):
     prompt = (
         "You are a teacher solving a student's assignment.\n"
