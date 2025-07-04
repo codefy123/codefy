@@ -12,6 +12,11 @@ import secrets
 import shutil
 import tempfile
 import time
+import logging
+
+# Set up logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger('WriteMate')
 
 # Load API key from .env
 load_dotenv()
@@ -43,18 +48,28 @@ def create_backgrounds():
     if not os.path.exists(blank_path):
         img = Image.new('RGB', (2480, 3508), (255, 255, 255))  # A4 at 300dpi
         img.save(blank_path)
+        logger.info(f"Created blank background at: {os.path.abspath(blank_path)}")
     
-    # Lined background - fixed with proper dimensions and more visible lines
+    # Lined background - create with high contrast lines
     lined_path = "bg/lined.png"
     if not os.path.exists(lined_path):
-        # Create a high-resolution lined background with darker lines
+        # Create a high-resolution lined background
         img = Image.new('RGB', (2480, 3508), (255, 255, 255))
         draw = ImageDraw.Draw(img)
-        # Draw lines every 40 pixels with darker gray color
-        for y in range(150, 3508, 40):  # Start at 150 to avoid header area
-            draw.line([(100, y), (2380, y)], fill=(180, 180, 180), width=3)  # Darker gray, thicker lines
+        
+        # Draw margin line
+        draw.line([(100, 0), (100, 3508)], fill=(220, 220, 220), width=5)
+        
+        # Draw lines every 40 pixels (simulating notebook lines)
+        for y in range(200, 3508, 40):
+            draw.line([(120, y), (2360, y)], fill=(150, 150, 150), width=3)
+        
         img.save(lined_path)
-        print(f"Created lined background at: {os.path.abspath(lined_path)}")
+        logger.info(f"Created lined background at: {os.path.abspath(lined_path)}")
+    
+    # Verify both backgrounds exist
+    if not os.path.exists(blank_path) or not os.path.exists(lined_path):
+        logger.error("Background creation failed!")
 
 create_backgrounds()
 
@@ -63,6 +78,12 @@ BG_MAP = {
     "blank": os.path.abspath("bg/blank.png"),
     "lined": os.path.abspath("bg/lined.png"),
 }
+
+# Log background paths for debugging
+logger.info(f"Blank background path: {BG_MAP['blank']}")
+logger.info(f"Lined background path: {BG_MAP['lined']}")
+logger.info(f"Blank exists: {os.path.exists(BG_MAP['blank'])}")
+logger.info(f"Lined exists: {os.path.exists(BG_MAP['lined'])}")
 
 # ---------- Text Utilities ----------
 def normalize_quotes(text):
@@ -98,6 +119,7 @@ def extract_text_from_image(path):
         img = Image.open(path)
         return pytesseract.image_to_string(img)
     except ImportError:
+        logger.warning("Pytesseract not installed, using sample text")
         return "Sample question text for development purposes"
 
 def clean_response(text):
@@ -107,6 +129,7 @@ def clean_response(text):
 
 def solve_with_gemini(questions):
     if not os.getenv("GEMINI_API_KEY"):
+        logger.warning("No Gemini API key, using sample solutions")
         return "1. Sample solution for question one.\n2. Sample solution for question two.\n3. Sample solution for question three."
     
     prompt = (
@@ -126,6 +149,7 @@ class HandwrittenPDF(FPDF):
         self.bg_path = bg_path
         self.name = ""
         self.roll = ""
+        logger.info(f"PDF initialized with background: {bg_path}")
 
     def set_student_info(self, name, roll):
         self.name = name
@@ -136,13 +160,17 @@ class HandwrittenPDF(FPDF):
         if self.bg_path and os.path.exists(self.bg_path):
             try:
                 # Add background with original aspect ratio
-                self.image(self.bg_path, x=0, y=0, w=210, h=297)  # A4 dimensions
-            except RuntimeError as e:
-                print(f"Error adding background: {str(e)}")
-                # Fallback to blank background if there's an error
+                self.image(self.bg_path, x=0, y=0, w=210, h=297)  # A4 full
+                logger.debug(f"Added background: {self.bg_path}")
+            except Exception as e:
+                logger.error(f"Error adding background: {str(e)}")
+                # Try to use blank background as fallback
                 blank_path = BG_MAP["blank"]
                 if os.path.exists(blank_path):
                     self.image(blank_path, x=0, y=0, w=210, h=297)
+                    logger.warning(f"Using fallback background: {blank_path}")
+        else:
+            logger.warning(f"Background not found: {self.bg_path}")
         
         # Add name/roll to every page
         self.set_font("CustomFont", size=36)
@@ -172,40 +200,54 @@ def upload():
         roll = request.form.get("roll", "Unknown")
         file = request.files.get("file")
         font_key = request.form.get("font", "handwriting1")
-        bg_key = request.form.get("bg", "blank")
+        bg_key = request.form.get("background", "blank")
         ink_color = request.form.get("ink", "black")
 
+        logger.info(f"Received upload request - Name: {name}, Roll: {roll}, Font: {font_key}, BG: {bg_key}, Ink: {ink_color}")
+
         if not file or file.filename == '':
+            logger.error("No file selected")
             return "No file selected", 400
 
         # Create temp directory for output
         temp_dir = tempfile.mkdtemp()
+        logger.info(f"Created temp directory: {temp_dir}")
         
         # Save uploaded file
         upload_path = os.path.join(temp_dir, file.filename)
         file.save(upload_path)
+        logger.info(f"Saved uploaded file to: {upload_path}")
 
         # Extract and sanitize text
         ext = file.filename.split(".")[-1].lower()
+        logger.info(f"Processing {ext} file")
+        
         if ext in ["jpg", "jpeg", "png"]:
             raw = extract_text_from_image(upload_path)
         else:
             raw = extract_text_from_pdf(upload_path)
             
+        logger.debug(f"Raw extracted text: {raw[:200]}...")
+        
         clean_txt = sanitize_text(normalize_quotes(raw))
         solution_raw = solve_with_gemini(clean_txt)
         solution = sanitize_text(normalize_quotes(solution_raw))
+        
+        logger.info(f"Generated solution with {len(solution)} characters")
 
         # Get font and background paths
         font_path = os.path.join("fonts", FONT_MAP.get(font_key, "font1.ttf"))
         
-        # Handle background selection with fallback
+        # Handle background selection
         bg_path = BG_MAP.get(bg_key, BG_MAP["blank"])
-        if bg_key == "lined" and not os.path.exists(bg_path):
-            print("Lined background not found, using blank as fallback")
+        logger.info(f"Selected background: {bg_key} -> {bg_path}")
+        
+        # Verify background exists
+        if not os.path.exists(bg_path):
+            logger.warning(f"Background not found: {bg_path}, using blank")
             bg_path = BG_MAP["blank"]
             
-        print(f"Using background: {bg_path}")  # Debug output
+        logger.info(f"Using background: {bg_path} (exists: {os.path.exists(bg_path)})")
 
         # Generate PDF
         pdf = HandwrittenPDF(bg_path)
@@ -217,8 +259,10 @@ def upload():
         # Set ink color based on user selection
         if ink_color == "blue":
             pdf.set_text_color(0, 0, 255)
+            logger.info("Using blue ink")
         else:
             pdf.set_text_color(0, 0, 0)
+            logger.info("Using black ink")
 
         line_height = 11
         max_width = 180
@@ -230,12 +274,13 @@ def upload():
         # Split solution into answers
         answers = re.split(r"\n*\s*\d+\.\s*", solution)
         answers = [ans.strip() for ans in answers if ans.strip()]
+        logger.info(f"Split solution into {len(answers)} answers")
 
         for ans in answers:
-            # Step 1: Draw the answer number before margin
+            # Draw the answer number
             pdf.text(number_x, y, f"{number}.")
 
-            # Step 2: Wrap answer text and draw after margin
+            # Wrap answer text
             words = ans.split()
             current_line = ""
             for word in words:
@@ -253,7 +298,7 @@ def upload():
                 pdf.text(margin_x, y, current_line.strip())
                 y += line_height
 
-            # Step 3: Space between answers
+            # Space between answers
             y += 4
             number += 1
 
@@ -265,6 +310,7 @@ def upload():
         outname = f"solution_{name.replace(' ', '_')}_{int(datetime.now().timestamp())}.pdf"
         output_path = os.path.join(temp_dir, outname)
         pdf.output(output_path)
+        logger.info(f"PDF generated at: {output_path} (size: {os.path.getsize(output_path)} bytes)")
         
         # Send file and clean up
         response = make_response(send_file(
@@ -276,10 +322,12 @@ def upload():
         
         return response
     except Exception as e:
+        logger.exception(f"Error generating solution: {str(e)}")
         return f"Error generating solution: {str(e)}", 500
     finally:
         # Clean up temporary files
         if 'temp_dir' in locals():
+            logger.info(f"Cleaning up temp directory: {temp_dir}")
             shutil.rmtree(temp_dir, ignore_errors=True)
 
 # Error Handlers
@@ -297,4 +345,28 @@ def server_error(e):
 
 # ---------- Run ----------
 if __name__ == "__main__":
+    # Verify background images
+    print("Verifying background images:")
+    print(f"Blank: {BG_MAP['blank']} - Exists: {os.path.exists(BG_MAP['blank'])}")
+    print(f"Lined: {BG_MAP['lined']} - Exists: {os.path.exists(BG_MAP['lined'])}")
+    
+    if not os.path.exists(BG_MAP['lined']):
+        print("Recreating lined background...")
+        try:
+            # Create a high-resolution lined background
+            img = Image.new('RGB', (2480, 3508), (255, 255, 255))
+            draw = ImageDraw.Draw(img)
+            
+            # Draw margin line
+            draw.line([(100, 0), (100, 3508)], fill=(220, 220, 220), width=5)
+            
+            # Draw lines every 40 pixels
+            for y in range(200, 3508, 40):
+                draw.line([(120, y), (2360, y)], fill=(150, 150, 150), width=3)
+            
+            img.save(BG_MAP['lined'])
+            print(f"Recreated lined background at: {BG_MAP['lined']}")
+        except Exception as e:
+            print(f"Error recreating background: {str(e)}")
+    
     app.run(debug=True)
