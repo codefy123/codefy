@@ -45,6 +45,32 @@ BG_MAP = {
     "lined": os.path.abspath("bg/lined.png"),
 }
 
+# ---------- Text Utilities ----------
+def normalize_quotes(text):
+    replacements = {
+        '‘': '', '’': '',
+        '“': '', '”': '',
+        '—': '-', '–': '-', '…': '...',
+        '(': '<', ')': '>',
+        '{': '<', '}': '>',
+        '[': '<', ']': '>',
+        '=': ':',
+        '\\': '', '/': '',
+        '"': '', "'": ''
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+    return text
+
+def sanitize_text(text):
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 [](),.:;!?@%&-+=*\n")
+    return ''.join(c for c in text if c in allowed or c == '\n')
+
+def clean_response(text):
+    text = re.sub(r"[*`]", "", text)
+    text = re.sub(r"\n\s*\n+", "\n", text)
+    return text.strip()
+
 # Ensure backgrounds exist
 def create_backgrounds():
     if not os.path.exists(BG_MAP["blank"]):
@@ -74,12 +100,6 @@ def extract_text_from_image(path):
         return pytesseract.image_to_string(img)
     except:
         return "Sample OCR Text"
-
-def clean_response(text):
-    import re
-    text = re.sub(r"[*`]", "", text)
-    text = re.sub(r"\n\s*\n+", "\n", text)
-    return text.strip()
 
 def solve_with_gemini(questions):
     prompt = (
@@ -137,10 +157,13 @@ def upload():
         else:
             raw = extract_text_from_pdf(upload_path)
 
+        # Clean text
+        clean_txt = sanitize_text(normalize_quotes(raw))
+        solution_raw = solve_with_gemini(clean_txt)
+        solution = sanitize_text(normalize_quotes(solution_raw))
+
         font_path = os.path.join("fonts", FONT_MAP.get(font_key, "font1.ttf"))
         bg_path = BG_MAP.get(bg_key, BG_MAP["blank"])
-
-        solution = solve_with_gemini(raw)
 
         pdf = HandwrittenPDF(bg_path)
         pdf.set_student_info(name, roll)
@@ -205,7 +228,4 @@ def upload():
 # Health check
 @app.route("/")
 def hello():
-    return "WriteMate backend running."
-
-# if __name__ == "__main__":
-#     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=False)
+    return "HandWrittenPDF backend running."
