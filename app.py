@@ -223,7 +223,7 @@ def upload():
         return make_response(send_file(
             output_path,
             as_attachment=True,
-            download_name="Handwritten_Solution.pdf",
+            download_name="handwritten_solution.pdf",
             mimetype="application/pdf"
         ))
     except Exception as e:
