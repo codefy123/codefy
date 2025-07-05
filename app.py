@@ -1,6 +1,5 @@
 from flask import Flask, request, send_file, make_response, send_from_directory
 from fpdf import FPDF
-from flask_cors import CORS
 import os
 import fitz
 from PIL import Image, ImageDraw
