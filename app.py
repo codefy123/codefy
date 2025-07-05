@@ -24,7 +24,6 @@ app = Flask(__name__, static_folder="templates", static_url_path="")
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB
 app.config['SECRET_KEY'] = secrets.token_hex(16)
 
-CORS(app, resources={r"/upload": {"origins": "https://writemypdf.com"}})
 
 csrf = CSRFProtect(app)
 
