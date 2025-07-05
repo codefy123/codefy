@@ -1,8 +1,8 @@
-from flask import Flask, request, send_file, make_response
+from flask import Flask, request, send_file, make_response, send_from_directory
 from fpdf import FPDF
 from flask_cors import CORS
 import os
-import fitz  # PyMuPDF
+import fitz
 from PIL import Image, ImageDraw
 from datetime import datetime
 import re
@@ -14,21 +14,21 @@ import tempfile
 import logging
 from flask_wtf.csrf import CSRFProtect
 
-# Initialize logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("WriteMate")
+logger = logging.getLogger("WriteMyPDF")
 
-# Load API key
 load_dotenv()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="templates", static_url_path="")
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024  # 5MB
 app.config['SECRET_KEY'] = secrets.token_hex(16)
-CORS(app, resources={r"/upload": {"origins": "https://handwrittenpdf1.web.app"}})
+
+CORS(app)
 
 csrf = CSRFProtect(app)
 
+# Create necessary folders
 os.makedirs("fonts", exist_ok=True)
 os.makedirs("bg", exist_ok=True)
 
@@ -71,21 +71,6 @@ def clean_response(text):
     text = re.sub(r"\n\s*\n+", "\n", text)
     return text.strip()
 
-# Ensure backgrounds exist
-def create_backgrounds():
-    if not os.path.exists(BG_MAP["blank"]):
-        img = Image.new('RGB', (2480, 3508), (255, 255, 255))
-        img.save(BG_MAP["blank"])
-    if not os.path.exists(BG_MAP["lined"]):
-        img = Image.new('RGB', (2480, 3508), (255, 255, 255))
-        draw = ImageDraw.Draw(img)
-        for y in range(200, 3508, 40):
-            draw.line([(120, y), (2360, y)], fill=(150, 150, 150), width=3)
-        draw.line([(100, 0), (100, 3508)], fill=(220, 220, 220), width=5)
-        img.save(BG_MAP["lined"])
-
-create_backgrounds()
-
 def extract_text_from_pdf(path):
     text = ""
     with fitz.open(path) as doc:
@@ -112,6 +97,22 @@ def solve_with_gemini(questions):
     response = model.generate_content(prompt)
     return clean_response(response.text)
 
+# ---------- Background Setup ----------
+def create_backgrounds():
+    if not os.path.exists(BG_MAP["blank"]):
+        img = Image.new('RGB', (2480, 3508), (255, 255, 255))
+        img.save(BG_MAP["blank"])
+    if not os.path.exists(BG_MAP["lined"]):
+        img = Image.new('RGB', (2480, 3508), (255, 255, 255))
+        draw = ImageDraw.Draw(img)
+        for y in range(200, 3508, 40):
+            draw.line([(120, y), (2360, y)], fill=(150, 150, 150), width=3)
+        draw.line([(100, 0), (100, 3508)], fill=(220, 220, 220), width=5)
+        img.save(BG_MAP["lined"])
+
+create_backgrounds()
+
+# ---------- PDF Class ----------
 class HandwrittenPDF(FPDF):
     def __init__(self, bg_path):
         super().__init__()
@@ -133,6 +134,16 @@ class HandwrittenPDF(FPDF):
     def footer(self):
         pass
 
+# ---------- Routes ----------
+
+@app.route("/")
+def serve_index():
+    return send_from_directory("templates", "index.html")
+
+@app.route("/<path:path>")
+def serve_static(path):
+    return send_from_directory("templates", path)
+
 @app.route("/upload", methods=["POST"])
 @csrf.exempt
 def upload():
@@ -152,12 +163,9 @@ def upload():
         file.save(upload_path)
 
         ext = file.filename.split(".")[-1].lower()
-        if ext in ["jpg", "jpeg", "png"]:
-            raw = extract_text_from_image(upload_path)
-        else:
-            raw = extract_text_from_pdf(upload_path)
+        raw = extract_text_from_image(upload_path) if ext in ["jpg", "jpeg", "png"] else extract_text_from_pdf(upload_path)
 
-        # Clean text
+        # Clean and solve
         clean_txt = sanitize_text(normalize_quotes(raw))
         solution_raw = solve_with_gemini(clean_txt)
         solution = sanitize_text(normalize_quotes(solution_raw))
@@ -224,8 +232,3 @@ def upload():
     finally:
         if 'temp_dir' in locals():
             shutil.rmtree(temp_dir, ignore_errors=True)
-
-# Health check
-@app.route("/")
-def hello():
-    return "HandWrittenPDF backend running."
